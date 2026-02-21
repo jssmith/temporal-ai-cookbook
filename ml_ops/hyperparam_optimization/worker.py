@@ -5,7 +5,7 @@ workflows (evaluation, coordinator, random sweep, ladder sweep) and the
 evaluation activities. The heavier training workloads live in
 ``training_worker.py`` so they can be scheduled on GPU-capable machines.
 """
-
+#@AGENT: should this file be called evaluation_worker?
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 

@@ -31,7 +31,7 @@ from workflows import (
 # --------------------------------------------------------------------
 # Sample Sweep Configurations
 # --------------------------------------------------------------------
-
+#@AGENT let's put the configs into a separate file
 # Sample 1: {Model: BERT Uncased - Dataset: Glue}
 config_1 = CoordinatorWorkflowConfig(
     fine_tune_config=BertFineTuneConfig(
@@ -85,6 +85,7 @@ config_2 = CoordinatorWorkflowConfig(
 )
 
 # Sample 3 {Model: BERT Uncased - Dataset: IMDB}
+#@AGENT: consistency on seed assignment - let's not define a separate variable
 seed = random.randint(0, 10000)
 config_3 = CoordinatorWorkflowConfig(
     fine_tune_config=BertFineTuneConfig(
@@ -261,6 +262,7 @@ ladder_id = uuid.uuid4()  # Replace with custom naming logic as desired.
 # Sample 1: HPO Scaling Ladder
 ladder_config_1 = SweepRequest(
     experiment_id=f"Bert-ladder-sweep-{ladder_id}",
+    #@AGENT: can we make the base configurable, e.g., as a "getSweepRequest" function
     base=config_6,
     space=SweepSpace(
         learning_rate=(5e-5, 1e-5),
@@ -281,7 +283,7 @@ ladder_config_1 = SweepRequest(
 # Starter Main Function
 # ------------------------------------------------------------------------------
 
-
+#@AGENT: let's move main to the top of the file
 async def main() -> None:
     # 1. Connect to Temporal Server using the Pydantic data converter so our
     # request/response models can be passed directly as workflow arguments.
@@ -289,6 +291,7 @@ async def main() -> None:
 
     # 2. Pick the request to run. For the tutorial this is a single ladder
     # sweep, but you can easily swap in a different ``SweepRequest`` here.
+    #@AGENT: how about we make configs loadable from via command line args
     request = ladder_config_1
 
     # 3. Start the workflow and wait for the result. We call the ``run`` method

@@ -46,6 +46,7 @@ from custom_types import (
 # Human-friendly error message surfaced when ML dependencies are missing. This keeps
 # the Temporal worker process healthy even if the Python environment is not configured
 # for running the BERT example.
+# @AGENT: does this message really tirgger when any of these are missing, or only when torch is missing?
 TRANSFORMERS_IMPORT_MESSAGE: Final[str] = (
     "BERT checkpointing dependencies are not installed. "
     "Install 'transformers', 'datasets', and 'torch' to execute this activity."
@@ -996,6 +997,7 @@ async def jitter_seed(seed: int) -> int:
     workflows, but the Python symbol is ``jitter_seed`` to avoid shadowing
     ``transformers.set_seed`` used in training activities.
     """
+    #@AGENT: what is meant here by jitter the base seed deterministically? is the name jitter_seed intuitive?
     seed = seed + random.randint(-10000, 10000)
     if seed <= 0:
         seed = random.randint(0, 20000)

@@ -62,6 +62,7 @@ class CheckpointedBertTrainingWorkflow:
     3. Expose lightweight queries so external clients can inspect the most
        recent checkpoint while the run is still in flight.
     """
+    #@AGENT: why does it say materialize (or reuse), is that the same thing?
 
     def __init__(self) -> None:
         self.latest_checkpoint: CheckpointInfo | None = None

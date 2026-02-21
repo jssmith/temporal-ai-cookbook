@@ -17,9 +17,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+#@AGENT: why is this file called custom_types.py
+
 # ---------------------------------------------------------------------------
 # Checkpointing - related types
 # ---------------------------------------------------------------------------
+# #@AGENT: is glue / sst2 a good data set for Bert?
 class DatasetSnapshotRequest(BaseModel):
     """Request to create a dataset snapshot."""
 
@@ -79,6 +82,7 @@ class DatasetSnapshotResult(BaseModel):
     )
 
 
+#@AGENT: what is the purpose os saving all of this information in the checkpoint info? why not just put it in the file system?
 class CheckpointInfo(BaseModel):
     """Checkpoint information sent via signals."""
 
@@ -479,6 +483,7 @@ class SweepRequest(BaseModel):
     num_trials: int = 8
     """Total number of trials to run across all rungs/stages."""
 
+    #@AGENT: I'm interested in understanding how actual concurency gets set
     max_concurrency: int = 4
     """Maximum number of training/eval pipelines to run in parallel."""
 
