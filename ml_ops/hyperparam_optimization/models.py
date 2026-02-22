@@ -1,11 +1,10 @@
-"""Shared data models for the BERT fine-tuning and inference example.
+"""Shared data models for the BERT fine-tuning and hyperparameter optimization example.
 
 These Pydantic models are used in three places:
 
 - As workflow inputs/outputs (e.g., ``BertExperimentInput``)
 - As activity inputs/outputs (e.g., ``BertFineTuneRequest``)
-- From external clients (see ``train.py`` and ``inference.py``) that submit
-  workflows to Temporal.
+- From external clients (see ``starter.py``) that submit workflows to Temporal.
 
 Keeping the types in a dedicated module makes it easy to reuse them across
 workflows, activities, and client code while preserving a single source of
@@ -17,12 +16,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-#@AGENT: why is this file called custom_types.py
-
 # ---------------------------------------------------------------------------
 # Checkpointing - related types
 # ---------------------------------------------------------------------------
-# #@AGENT: is glue / sst2 a good data set for Bert?
+# SST-2 (Stanford Sentiment Treebank, binary) is a standard BERT benchmark:
+# small, well-understood, and compatible with any BERT-family tokenizer.
+# Other model/dataset combinations are demonstrated in sample_configs.py.
 class DatasetSnapshotRequest(BaseModel):
     """Request to create a dataset snapshot."""
 
@@ -82,9 +81,17 @@ class DatasetSnapshotResult(BaseModel):
     )
 
 
-#@AGENT: what is the purpose os saving all of this information in the checkpoint info? why not just put it in the file system?
 class CheckpointInfo(BaseModel):
-    """Checkpoint information sent via signals."""
+    """Checkpoint information sent via signals.
+
+    Storing checkpoint metadata in workflow state (rather than only on the
+    filesystem) serves two purposes:
+
+    1. The workflow can make orchestration decisions (e.g., resume-from-latest)
+       without issuing filesystem I/O, which must happen inside activities.
+    2. Checkpoint history survives cross-worker recovery even if the new worker
+       runs on a different machine with a different filesystem.
+    """
 
     epoch: int = Field(description="Training epoch number")
     step: int = Field(description="Global training step")
@@ -199,12 +206,10 @@ class BertFineTuneRequest(BaseModel):
     config: BertFineTuneConfig
     """Configuration for the fine-tuning experiment."""
 
-    # NEW: Pass the dataset snapshot to use for reproducible training
     dataset_snapshot: DatasetSnapshotResult | None = Field(
         default=None, description="Optional dataset snapshot to use for reproducible training."
     )
 
-    # NEW: Allow resuming from checkpoint through act
     resume_from_checkpoint: str | None = Field(
         default=None, description="Path to checkpoint to resume from (if retrying)"
     )
@@ -483,9 +488,14 @@ class SweepRequest(BaseModel):
     num_trials: int = 8
     """Total number of trials to run across all rungs/stages."""
 
-    #@AGENT: I'm interested in understanding how actual concurency gets set
     max_concurrency: int = 4
-    """Maximum number of training/eval pipelines to run in parallel."""
+    """Maximum number of training/eval pipelines to run in parallel.
+
+    ``LadderSweepWorkflow`` enforces this via an ``asyncio.Semaphore`` in
+    ``_run_one_cfg()``. This is a *workflow-level* limit on how many
+    coordinator child workflows run concurrently. Worker-level concurrency
+    is controlled separately by ``Worker(max_concurrent_activities=...)``.
+    """
 
     seed: int = 42
     """Base random seed used to keep workflow-side sampling deterministic."""

@@ -1,4 +1,9 @@
-"""Temporal activities for BERT checkpointing and fine-tuning."""
+"""Temporal activities for BERT checkpointing and fine-tuning.
+
+Required dependencies: torch, transformers, datasets, numpy.
+These are imported at module level -- if any are missing, the import will
+fail immediately with a clear traceback.
+"""
 
 import asyncio
 import contextlib
@@ -33,7 +38,7 @@ from transformers import (
     set_seed,
 )
 
-from custom_types import (
+from models import (
     BertEvalRequest,
     BertEvalResult,
     BertFineTuneRequest,
@@ -41,15 +46,6 @@ from custom_types import (
     CheckpointInfo,
     DatasetSnapshotRequest,
     DatasetSnapshotResult,
-)
-
-# Human-friendly error message surfaced when ML dependencies are missing. This keeps
-# the Temporal worker process healthy even if the Python environment is not configured
-# for running the BERT example.
-# @AGENT: does this message really tirgger when any of these are missing, or only when torch is missing?
-TRANSFORMERS_IMPORT_MESSAGE: Final[str] = (
-    "BERT checkpointing dependencies are not installed. "
-    "Install 'transformers', 'datasets', and 'torch' to execute this activity."
 )
 
 # How frequently the fine-tuning activity should send heartbeats while training is running in a background thread.
@@ -276,10 +272,6 @@ class BertFineTuneActivities:
         - The code can be imported and unit-tested without a Temporal worker.
         - The Temporal worker can keep polling for new tasks while training runs.
         """
-        if torch is None or load_dataset is None:
-            # pragma: no cover - only hit when deps are actually missing
-            raise RuntimeError(TRANSFORMERS_IMPORT_MESSAGE)
-
         start_time = time.perf_counter()
         self.config = request.config
 
@@ -750,9 +742,6 @@ class BertEvalActivities:
         and computes simple accuracy. All I/O and ML details live here so the
         Temporal workflow layer can remain deterministic.
         """
-        if torch is None or load_dataset is None:
-            raise RuntimeError(TRANSFORMERS_IMPORT_MESSAGE)
-
         # Select device mirroring the training configuration.
         if request.use_gpu and torch.cuda.is_available():
             device = torch.device("cuda")
@@ -990,15 +979,17 @@ class QueueingCheckpointCallback(TrainerCallback):
 
 
 @activity.defn(name="set_seed")
-async def jitter_seed(seed: int) -> int:
-    """Activity used by ladder sweeps to jitter a base seed deterministically.
+async def randomize_seed(seed: int) -> int:
+    """Generate a non-deterministic seed for a sweep trial.
 
-    The activity name is kept as ``set_seed`` for compatibility with existing
-    workflows, but the Python symbol is ``jitter_seed`` to avoid shadowing
-    ``transformers.set_seed`` used in training activities.
+    Each trial in a sweep needs a *different* random seed so models don't all
+    train identically. The non-determinism here is intentional: if the seed
+    were derived deterministically from the input, a retried activity would
+    produce the same seed and a resumed sweep could end up with duplicate
+    configs. Activities are Temporal's designated place for non-deterministic
+    operations; the returned value becomes part of the deterministic event
+    history so replays see the same result without re-executing.
+
+    The activity name is kept as ``"set_seed"`` for workflow compatibility.
     """
-    #@AGENT: what is meant here by jitter the base seed deterministically? is the name jitter_seed intuitive?
-    seed = seed + random.randint(-10000, 10000)
-    if seed <= 0:
-        seed = random.randint(0, 20000)
-    return seed
+    return random.randint(0, 20000)

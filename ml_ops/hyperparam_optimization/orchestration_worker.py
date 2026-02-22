@@ -1,11 +1,11 @@
-"""Temporal worker hosting BERT evaluation and sweep workflows.
+"""Temporal worker hosting sweep orchestration workflows and evaluation activities.
 
-This worker is intentionally lightweight: it only runs the orchestration
-workflows (evaluation, coordinator, random sweep, ladder sweep) and the
-evaluation activities. The heavier training workloads live in
-``training_worker.py`` so they can be scheduled on GPU-capable machines.
+This worker runs the orchestration layer: evaluation, coordinator, random
+sweep, and ladder sweep workflows, plus the evaluation and seed activities.
+The heavier training workloads live in ``training_worker.py`` so they can be
+scheduled on GPU-capable machines.
 """
-#@AGENT: should this file be called evaluation_worker?
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -13,7 +13,7 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
-from bert_activities import BertEvalActivities, jitter_seed
+from bert_activities import BertEvalActivities, randomize_seed
 from workflows import (
     BertEvalWorkflow,
     CheckpointedBertTrainingWorkflow,
@@ -51,7 +51,7 @@ async def main() -> None:
             SweepWorkflow,
             LadderSweepWorkflow,
         ],
-        activities=[eval_activities.evaluate_bert_model, jitter_seed],
+        activities=[eval_activities.evaluate_bert_model, randomize_seed],
         activity_executor=ThreadPoolExecutor(5),
         max_concurrent_activities=1,  # Keep max concurrent activities at 1 for local execution to prevent OOM issues
     )

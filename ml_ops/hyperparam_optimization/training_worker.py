@@ -18,9 +18,7 @@ from bert_activities import (
     BertCheckpointingActivities,
     BertFineTuneActivities,
 )
-from workflows import (
-    CheckpointedBertTrainingWorkflow,
-)
+from workflows import CheckpointedBertTrainingWorkflow
 
 
 # ------------------------------------------------------------------

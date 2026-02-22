@@ -28,7 +28,7 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from custom_types import (
+    from models import (
         BertEvalRequest,
         BertEvalResult,
         BertFineTuneConfig,
@@ -56,13 +56,15 @@ class CheckpointedBertTrainingWorkflow:
     The pattern here is:
 
     1. Materialize (or reuse) a dataset snapshot so that training becomes
-       reproducible across workers and retries.
+       reproducible across workers and retries. "Materialize" means download
+       from HuggingFace and save as local JSONL; "reuse" means skip the
+       download because an identical snapshot (same content hash) already
+       exists on disk.
     2. Run a single long-lived training activity that periodically saves model
        checkpoints and reports progress through signals.
     3. Expose lightweight queries so external clients can inspect the most
        recent checkpoint while the run is still in flight.
     """
-    #@AGENT: why does it say materialize (or reuse), is that the same thing?
 
     def __init__(self) -> None:
         self.latest_checkpoint: CheckpointInfo | None = None
@@ -823,11 +825,7 @@ class LadderSweepWorkflow:
         best_cfg.evaluation_config.batch_size = best_cfg.fine_tune_config.batch_size
         best_cfg.evaluation_config.max_seq_length = best_cfg.fine_tune_config.max_seq_length
 
-        old_default = f"./bert_runs/{best_cfg.run_id}"
-        new_default = f"./bert_runs/{ablation_run_id}"
-
-        if best_cfg.evaluation_config.model_path in (None. old_default):
-            best_cfg.evaluation_config.model_path = new_default
+        best_cfg.evaluation_config.model_path = f"./bert_runs/{best_cfg.run_id}"
         best_result = await LadderSweepWorkflow._run_one_cfg(sem, best_cfg, "best-fallback")
 
         # Best-effort ablation in the fallback path as well: use the same
