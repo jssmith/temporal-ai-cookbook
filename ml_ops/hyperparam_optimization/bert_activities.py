@@ -13,13 +13,17 @@ from pathlib import Path
 from typing import Final
 
 import numpy as np
-import torch
 
 try:
-    from datasets import ClassLabel
+    import torch
+except Exception:
+    torch = None
+
+try:
+    from datasets import ClassLabel, load_dataset
 except Exception:
     ClassLabel = None
-from datasets import load_dataset
+    load_dataset = None
 from temporalio import activity
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -997,8 +1001,9 @@ async def jitter_seed(seed: int) -> int:
     workflows, but the Python symbol is ``jitter_seed`` to avoid shadowing
     ``transformers.set_seed`` used in training activities.
     """
-    #@AGENT: what is meant here by jitter the base seed deterministically? is the name jitter_seed intuitive?
-    seed = seed + random.randint(-10000, 10000)
+    # Jitter deterministically so replays with the same seed stay stable.
+    rng = random.Random(seed)
+    seed = seed + rng.randint(-10000, 10000)
     if seed <= 0:
-        seed = random.randint(0, 20000)
+        seed = rng.randint(0, 20000)
     return seed

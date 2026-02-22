@@ -824,10 +824,8 @@ class LadderSweepWorkflow:
         best_cfg.evaluation_config.max_seq_length = best_cfg.fine_tune_config.max_seq_length
 
         old_default = f"./bert_runs/{best_cfg.run_id}"
-        new_default = f"./bert_runs/{ablation_run_id}"
-
-        if best_cfg.evaluation_config.model_path in (None. old_default):
-            best_cfg.evaluation_config.model_path = new_default
+        if best_cfg.evaluation_config.model_path in (None, old_default):
+            best_cfg.evaluation_config.model_path = old_default
         best_result = await LadderSweepWorkflow._run_one_cfg(sem, best_cfg, "best-fallback")
 
         # Best-effort ablation in the fallback path as well: use the same
