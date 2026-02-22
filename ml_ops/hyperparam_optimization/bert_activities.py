@@ -1,5 +1,9 @@
 """Temporal activities for BERT checkpointing and fine-tuning.
 
+ADAPT: Replace the training, evaluation, and checkpointing implementations
+in this file with your own model's logic. The Temporal activity signatures
+and heartbeat/signal patterns can stay the same.
+
 Required dependencies: torch, transformers, datasets, numpy.
 These are imported at module level -- if any are missing, the import will
 fail immediately with a clear traceback.
@@ -47,6 +51,8 @@ from models import (
     DatasetSnapshotRequest,
     DatasetSnapshotResult,
 )
+
+RUNS_DIR = "./bert_runs"  # ADAPT: Must match workflows.py
 
 # How frequently the fine-tuning activity should send heartbeats while training is running in a background thread.
 HEARTBEAT_INTERVAL_SECONDS: Final[float] = 5.0
@@ -401,7 +407,7 @@ class BertFineTuneActivities:
         save_steps = max(1, steps_per_epoch // 2)
 
         training_args = TrainingArguments(
-            output_dir=f"./bert_runs/{request.run_id}",
+            output_dir=f"{RUNS_DIR}/{request.run_id}",
             num_train_epochs=float(self.config.num_epochs),
             per_device_train_batch_size=self.config.batch_size,
             per_device_eval_batch_size=self.config.batch_size,
@@ -737,7 +743,7 @@ class BertEvalActivities:
     def _evaluate_bert_model_sync(request: BertEvalRequest) -> BertEvalResult:
         """Evaluate a fine-tuned BERT model on a public dataset split.
 
-        This helper loads a saved checkpoint from ``./bert_runs/{run_id}``, runs
+        This helper loads a saved checkpoint from ``{RUNS_DIR}/{run_id}``, runs
         batched inference over a Hugging Face dataset (GLUE SST-2 by default),
         and computes simple accuracy. All I/O and ML details live here so the
         Temporal workflow layer can remain deterministic.

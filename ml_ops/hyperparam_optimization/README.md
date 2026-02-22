@@ -159,9 +159,98 @@ Two task queues separate concerns:
 
 ## Adapting this example
 
-**Change the model or dataset:** Edit `sample_configs.py` to add a new `CoordinatorWorkflowConfig`. Any HuggingFace model/dataset that works with `AutoModelForSequenceClassification` should work -- the activities auto-detect text fields, label columns, and task type.
+Every adaptation point in the codebase is marked with a `# ADAPT:` comment. Run this to find them all:
 
-**Add search dimensions:** Modify `SweepSpace` in `models.py` and update the sampling logic in `LadderSweepWorkflow._tpe_suggest()` and `SweepWorkflow.run()`.
+```bash
+grep -rn 'ADAPT' *.py
+```
+
+### What to change (checklist)
+
+1. **Your training config** (`models.py`) -- Rename `BertFineTuneConfig`, add/remove fields for your model's hyperparameters.
+2. **Your eval result** (`models.py`) -- Rename `BertEvalResult`, change metric fields (e.g., replace `accuracy` with `mse` for regression).
+3. **Your search space** (`models.py`) -- Update `SweepSpace` dimensions to match your new config fields.
+4. **Your scoring metric** (`workflows.py`) -- Edit `_score_eval_result()` to return the metric you want to maximize.
+5. **Your sampling code** (`workflows.py`) -- Edit `_sample_random_hyperparams()` and the TPE-informed branch in `_tpe_suggest()` to sample your new hyperparameters.
+6. **Your activities** (`bert_activities.py`) -- Replace the training, evaluation, and checkpointing implementations with your own model's logic.
+7. **Constants and names** (`workflows.py`) -- Update `RUNS_DIR` and `TRAINING_TASK_QUEUE`; update workers (`training_worker.py`, `orchestration_worker.py`) to match.
+8. **Sample configs** (`sample_configs.py`) -- Add your model/dataset combinations.
+
+### Example: Adapting for image classification
+
+Here is what steps 1-5 look like for a ResNet/CIFAR-10 scenario (illustrative, not runnable):
+
+**Step 1 -- Training config** (`models.py`):
+```python
+class ImageTrainConfig(BaseModel):
+    model_name: str = "resnet50"
+    dataset_name: str = "cifar10"
+    num_epochs: int = 10
+    batch_size: int = 64
+    learning_rate: float = 1e-3
+    image_size: int = 224
+    weight_decay: float = 1e-4
+    use_gpu: bool = True
+    max_train_samples: int | None = 5_000
+    seed: int = 42
+    run_id: str | None = None
+```
+
+**Step 2 -- Eval result** (`models.py`):
+```python
+class ImageEvalResult(BaseModel):
+    run_id: str
+    dataset_name: str
+    split: str
+    num_examples: int
+    accuracy: float
+    top5_accuracy: float
+```
+
+**Step 3 -- Search space** (`models.py`):
+```python
+class SweepSpace(BaseModel):
+    learning_rate: tuple[float, float] = (1e-4, 1e-2)
+    batch_size: list[int] = [32, 64, 128]
+    image_size: list[int] = [160, 224]
+    weight_decay: tuple[float, float] = (1e-5, 1e-3)
+```
+
+**Step 4 -- Scoring metric** (`workflows.py`):
+```python
+def _score_eval_result(result: ImageEvalResult) -> float:
+    return result.top5_accuracy
+```
+
+**Step 5 -- Sampling code** (`workflows.py`):
+```python
+def _sample_random_hyperparams(rng, cfg, space) -> None:
+    cfg.fine_tune_config.batch_size = rng.choice(space.batch_size)
+    cfg.fine_tune_config.image_size = rng.choice(space.image_size)
+
+    lo, hi = space.learning_rate
+    u = rng.random()
+    cfg.fine_tune_config.learning_rate = float(
+        math.exp(math.log(lo) + u * (math.log(hi) - math.log(lo)))
+    )
+
+    lo, hi = space.weight_decay
+    u = rng.random()
+    cfg.fine_tune_config.weight_decay = float(
+        math.exp(math.log(lo) + u * (math.log(hi) - math.log(lo)))
+    )
+```
+
+### Files you do NOT need to change
+
+The ladder/TPE sweep structure, coordinator fan-out pattern, and checkpoint-signal mechanism are reusable as-is. Specifically:
+
+- `LadderSweepWorkflow` -- stage progression, survivor selection, and TPE proposal loop
+- `CoordinatorWorkflow` -- fan-out training + evaluation and `run_id` propagation
+- `CheckpointedBertTrainingWorkflow` -- checkpoint signaling and query pattern
+- `BertEvalWorkflow` -- evaluation child workflow structure
+
+These workflows only interact with your model through the config types, the scoring function, and the activities.
 
 **Connect to Temporal Cloud:** Pass `--temporal-address <your-cloud-address>` to the starter and update the worker connection code with your namespace and TLS credentials.
 

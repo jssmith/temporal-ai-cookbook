@@ -29,6 +29,8 @@ async def main() -> None:
     # our request/response models can be used directly as activity arguments.
     client = await Client.connect("localhost:7233", data_converter=pydantic_data_converter)
 
+    # ADAPT: Change the task queue name (must match TRAINING_TASK_QUEUE in
+    # workflows.py) and activity imports when using your own model.
     # 2. Set task queue dedicated to training workloads.
     task_queue = "bert-training-task-queue"
 

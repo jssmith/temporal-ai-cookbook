@@ -32,6 +32,8 @@ async def main() -> None:
     # used by the starter script so typed models round-trip cleanly.
     client = await Client.connect("localhost:7233", data_converter=pydantic_data_converter)
 
+    # ADAPT: Change the task queue name and activity imports when using
+    # your own model's activities.
     # 2. Set the task queue that this worker will poll. This must match the
     # ``task_queue`` used when starting workflows from ``starter.py``.
     task_queue = "bert-eval-task-queue"

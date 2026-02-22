@@ -27,6 +27,10 @@ from datetime import timedelta
 
 from temporalio import workflow
 
+# ADAPT: Change these when using a different model or project layout.
+RUNS_DIR = "./bert_runs"
+TRAINING_TASK_QUEUE = "bert-training-task-queue"
+
 with workflow.unsafe.imports_passed_through():
     from models import (
         BertEvalRequest,
@@ -44,6 +48,12 @@ with workflow.unsafe.imports_passed_through():
         SweepSpace,
         TrialResult,
     )
+
+
+# ADAPT: Change this to your evaluation metric. Higher must be better.
+# For regression, use e.g.: -result.mse
+def _score_eval_result(result: BertEvalResult) -> float:
+    return result.accuracy
 
 
 # ----------------------------------------------------------------------------------
@@ -226,7 +236,7 @@ class CoordinatorWorkflow:
     :class:`BertEvalResult` objects. Internally it:
 
     - Normalizes and propagates a single ``run_id`` across training/eval
-      configs so all artifacts live under ``./bert_runs/{run_id}``.
+      configs so all artifacts live under ``{RUNS_DIR}/{run_id}``.
     - Starts a child :class:`CheckpointedBertTrainingWorkflow` per config.
     - Once all training runs are finished, starts a matching
       :class:`BertEvalWorkflow` per config and returns the results.
@@ -266,7 +276,7 @@ class CoordinatorWorkflow:
         # default it to the run-scoped directory that training writes to. This
         # keeps all path decisions centralized in the coordinator.
         if cfg.evaluation_config.model_path is None:
-            cfg.evaluation_config.model_path = f"./bert_runs/{canonical_run_id}"
+            cfg.evaluation_config.model_path = f"{RUNS_DIR}/{canonical_run_id}"
 
     @workflow.run
     async def run(self, input: CoordinatorWorkflowInput) -> list[BertEvalResult]:
@@ -278,27 +288,14 @@ class CoordinatorWorkflow:
             # config will look for checkpoints in the right location.
             self.set_run_id(cfg=config)
 
-            # Step 2: start a checkpoint-aware training workflow as a child
-            # workflow. We pass in a fresh ``BertFineTuneConfig`` so this
-            # workflow remains decoupled from how callers construct configs.
+            # Step 2: start a checkpoint-aware training workflow as a child.
+            train_cfg = config.fine_tune_config.model_copy(deep=True)
+            train_cfg.run_id = config.run_id
             run = workflow.execute_child_workflow(
                 CheckpointedBertTrainingWorkflow.run,
-                BertFineTuneConfig(
-                    run_id=config.run_id,
-                    model_name=config.fine_tune_config.model_name,
-                    dataset_name=config.fine_tune_config.dataset_name,
-                    dataset_config_name=config.fine_tune_config.dataset_config_name,
-                    num_epochs=config.fine_tune_config.num_epochs,
-                    batch_size=config.fine_tune_config.batch_size,
-                    learning_rate=config.fine_tune_config.learning_rate,
-                    max_seq_length=config.fine_tune_config.max_seq_length,
-                    use_gpu=bool(config.fine_tune_config.use_gpu),
-                    max_train_samples=config.fine_tune_config.max_train_samples,
-                    max_eval_samples=config.fine_tune_config.max_eval_samples,
-                    seed=config.fine_tune_config.seed,
-                ),
+                train_cfg,
                 id=f"checkpointed-bert-training-workflow-{config.run_id}",
-                task_queue="bert-training-task-queue",
+                task_queue=TRAINING_TASK_QUEUE,
             )
             self.run_pointers.append(run)
 
@@ -308,20 +305,14 @@ class CoordinatorWorkflow:
         # Step 3: fan out evaluation workflows, one per training run, using the
         # run-scoped model_path that ``CheckpointedBertTrainingWorkflow`` wrote.
         for config in input.configs:
+            # ADAPT: max_eval_samples intentionally comes from fine_tune_config
+            # so training and evaluation use the same sample budget.
+            eval_cfg = config.evaluation_config.model_copy(deep=True)
+            eval_cfg.run_id = config.run_id
+            eval_cfg.max_eval_samples = config.fine_tune_config.max_eval_samples
             eval_pointer = workflow.execute_child_workflow(
                 BertEvalWorkflow.run,
-                BertEvalRequest(
-                    run_id=config.run_id,
-                    dataset_name=config.evaluation_config.dataset_name,
-                    dataset_config_name=config.evaluation_config.dataset_config_name,
-                    split=config.evaluation_config.split,
-                    max_eval_samples=config.fine_tune_config.max_eval_samples,
-                    max_seq_length=config.evaluation_config.max_seq_length,
-                    batch_size=config.evaluation_config.batch_size,
-                    use_gpu=bool(config.evaluation_config.use_gpu),
-                    model_path=config.evaluation_config.model_path,
-                    seed=config.evaluation_config.seed,
-                ),
+                eval_cfg,
                 id=f"bert-eval-workflow-{config.run_id}",
             )
             self.eval_pointers.append(eval_pointer)
@@ -353,30 +344,14 @@ class SweepWorkflow:
             run_id = f"{req.experiment_id}-{i:04d}"
             cfg.run_id = run_id
 
-            # Sample hyperparams
-            selected_batch_size = rng.choice(req.space.batch_size)
-            cfg.fine_tune_config.batch_size = selected_batch_size
-            cfg.evaluation_config.batch_size = selected_batch_size
-            workflow.logger.info("Trial %s: sampled batch_size=%s", i, selected_batch_size)
-
-            selected_max_seq_length = rng.choice(req.space.max_seq_length)
-            cfg.fine_tune_config.max_seq_length = selected_max_seq_length
-            cfg.evaluation_config.max_seq_length = selected_max_seq_length
-            workflow.logger.info("Trial %s: sampled max_seq_length=%s", i, selected_max_seq_length)
-
-            selected_epochs = rng.choice(req.space.num_epochs)
-            cfg.fine_tune_config.num_epochs = selected_epochs
-            workflow.logger.info("Trial %s: sampled num_epochs=%s", i, selected_epochs)
-
-            # log-uniform lr
-            lo, hi = req.space.learning_rate
-            # sample
-            u = rng.random()
-            cfg.fine_tune_config.learning_rate = float(
-                math.exp(math.log(lo) + u * (math.log(hi) - math.log(lo)))
-            )
+            _sample_random_hyperparams(rng, cfg, req.space)
             workflow.logger.info(
-                "Trial %s: sampled learning_rate=%.6f", i, cfg.fine_tune_config.learning_rate
+                "Trial %s: batch_size=%s max_seq_length=%s num_epochs=%s learning_rate=%.6f",
+                i,
+                cfg.fine_tune_config.batch_size,
+                cfg.fine_tune_config.max_seq_length,
+                cfg.fine_tune_config.num_epochs,
+                cfg.fine_tune_config.learning_rate,
             )
             trial_cfgs.append(cfg)
 
@@ -391,7 +366,7 @@ class SweepWorkflow:
 
         for cfg in trial_cfgs:
             er = by_run[cfg.run_id]
-            score = er.accuracy
+            score = _score_eval_result(er)
             trials.append(
                 TrialResult(
                     run_id=cfg.run_id,
@@ -411,6 +386,26 @@ class SweepWorkflow:
             best_score=best.score,
             leaderboard=trials,
         )
+
+
+# ADAPT: Update this function when changing which hyperparameters are swept.
+def _sample_random_hyperparams(
+    rng, cfg: CoordinatorWorkflowConfig, space: SweepSpace
+) -> None:
+    """Sample hyperparameters uniformly from the search space and apply to cfg."""
+    cfg.fine_tune_config.batch_size = rng.choice(space.batch_size)
+    cfg.evaluation_config.batch_size = cfg.fine_tune_config.batch_size
+
+    cfg.fine_tune_config.max_seq_length = rng.choice(space.max_seq_length)
+    cfg.evaluation_config.max_seq_length = cfg.fine_tune_config.max_seq_length
+
+    cfg.fine_tune_config.num_epochs = rng.choice(space.num_epochs)
+
+    lo, hi = space.learning_rate
+    u = rng.random()
+    cfg.fine_tune_config.learning_rate = float(
+        math.exp(math.log(lo) + u * (math.log(hi) - math.log(lo)))
+    )
 
 
 @dataclass
@@ -493,6 +488,7 @@ class LadderSweepWorkflow:
         return (1.0 / (sigma * math.sqrt(2.0 * math.pi))) * math.exp(-0.5 * z * z)
 
     @staticmethod
+    # ADAPT: Update attr names here when changing which hyperparameters are swept.
     def cat_weights(obs: list[_TrialObs], attr: str, choices: list[int]) -> dict[int, float]:
         """Count how often each categorical value appears, with Laplace smoothing."""
         c = Counter(getattr(o.cfg.fine_tune_config, attr) for o in obs)
@@ -518,33 +514,19 @@ class LadderSweepWorkflow:
         """
         if len(history) < 8 or rng.random() < epsilon_random:
             cfg = base.model_copy(deep=True)
-
-            selected_batch_size = rng.choice(space.batch_size)
-            cfg.fine_tune_config.batch_size = selected_batch_size
-            cfg.evaluation_config.batch_size = selected_batch_size
-            workflow.logger.info("Random TPE trial: sampled batch_size=%s", selected_batch_size)
-
-            selected_max_seq_length = rng.choice(space.max_seq_length)
-            cfg.fine_tune_config.max_seq_length = selected_max_seq_length
-            cfg.evaluation_config.max_seq_length = selected_max_seq_length
+            _sample_random_hyperparams(rng, cfg, space)
             workflow.logger.info(
-                "Random TPE trial: sampled max_seq_length=%s", selected_max_seq_length
-            )
-
-            selected_epochs = rng.choice(space.num_epochs)
-            cfg.fine_tune_config.num_epochs = selected_epochs
-            workflow.logger.info("Random TPE trial: sampled num_epochs=%s", selected_epochs)
-
-            lo, hi = space.learning_rate
-            u = rng.random()
-            cfg.fine_tune_config.learning_rate = float(
-                math.exp(math.log(lo) + u * (math.log(hi) - math.log(lo)))
-            )
-            workflow.logger.info(
-                "Random TPE trial: sampled learning_rate=%.6f", cfg.fine_tune_config.learning_rate
+                "Random TPE trial: batch_size=%s max_seq_length=%s num_epochs=%s learning_rate=%.6f",
+                cfg.fine_tune_config.batch_size,
+                cfg.fine_tune_config.max_seq_length,
+                cfg.fine_tune_config.num_epochs,
+                cfg.fine_tune_config.learning_rate,
             )
             return cfg
 
+        # ADAPT: Update the distributions below when changing which hyperparameters
+        # are swept. Categorical params use cat_weights(); continuous params use
+        # a log-normal fit. Add one block per new hyperparameter dimension.
         sorted_hist = sorted(history, key=lambda o: o.score, reverse=True)
         n_good = max(1, int(math.ceil(gamma * len(sorted_hist))))
         good = sorted_hist[:n_good]
@@ -645,7 +627,7 @@ class LadderSweepWorkflow:
 
                 # Ensure model_path exists for eval
                 if c.evaluation_config.model_path is None and c.run_id:
-                    c.evaluation_config.model_path = f"./bert_runs/{c.run_id}"
+                    c.evaluation_config.model_path = f"{RUNS_DIR}/{c.run_id}"
 
                 stage_cfgs.append(c)
 
@@ -665,7 +647,7 @@ class LadderSweepWorkflow:
                 c.evaluation_config.max_seq_length = c.fine_tune_config.max_seq_length
 
                 if c.evaluation_config.model_path is None:
-                    c.evaluation_config.model_path = f"./bert_runs/{run_id}"
+                    c.evaluation_config.model_path = f"{RUNS_DIR}/{run_id}"
 
                 c.fine_tune_config.num_epochs = epochs
                 c.fine_tune_config.max_train_samples = max_train
@@ -701,15 +683,15 @@ class LadderSweepWorkflow:
                 id=f"coordinator-{req.experiment_id}-stage-{stage_idx}",
             )
 
-            # Rank by accuracy for logging and survivor selection.
-            last_ranked = sorted(stage_results, key=lambda r: r.accuracy, reverse=True)
+            # Rank by score for logging and survivor selection.
+            last_ranked = sorted(stage_results, key=_score_eval_result, reverse=True)
 
             # Update history used by TPE with observations from this rung.
             by_run = {r.run_id: r for r in stage_results}
             for cfg in stage_cfgs:
                 r = by_run[cfg.run_id]
                 history.append(
-                    _TrialObs(run_id=cfg.run_id, cfg=cfg, stage_idx=stage_idx, score=r.accuracy)
+                    _TrialObs(run_id=cfg.run_id, cfg=cfg, stage_idx=stage_idx, score=_score_eval_result(r))
                 )
 
             # Select survivors for the next rung.
@@ -761,8 +743,8 @@ class LadderSweepWorkflow:
                     ablation_cfg.fine_tune_config.max_seq_length
                 )
 
-                old_default = f"./bert_runs/{best_cfg.run_id}"
-                new_default = f"./bert_runs/{ablation_run_id}"
+                old_default = f"{RUNS_DIR}/{best_cfg.run_id}"
+                new_default = f"{RUNS_DIR}/{ablation_run_id}"
 
                 if ablation_cfg.evaluation_config.model_path in (None, old_default):
                     ablation_cfg.evaluation_config.model_path = new_default
@@ -825,7 +807,7 @@ class LadderSweepWorkflow:
         best_cfg.evaluation_config.batch_size = best_cfg.fine_tune_config.batch_size
         best_cfg.evaluation_config.max_seq_length = best_cfg.fine_tune_config.max_seq_length
 
-        best_cfg.evaluation_config.model_path = f"./bert_runs/{best_cfg.run_id}"
+        best_cfg.evaluation_config.model_path = f"{RUNS_DIR}/{best_cfg.run_id}"
         best_result = await LadderSweepWorkflow._run_one_cfg(sem, best_cfg, "best-fallback")
 
         # Best-effort ablation in the fallback path as well: use the same
@@ -846,7 +828,7 @@ class LadderSweepWorkflow:
                 ablation_cfg.fine_tune_config.max_seq_length
             )
             if ablation_cfg.evaluation_config.model_path is None:
-                ablation_cfg.evaluation_config.model_path = f"./bert_runs/{ablation_run_id}"
+                ablation_cfg.evaluation_config.model_path = f"{RUNS_DIR}/{ablation_run_id}"
 
             seed = await workflow.execute_activity(
                 "set_seed",

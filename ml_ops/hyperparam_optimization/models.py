@@ -105,6 +105,7 @@ class CheckpointInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# ADAPT: Rename and modify this class for your model's training configuration.
 class BertFineTuneConfig(BaseModel):
     """Configuration for a single BERT fine-tuning run.
 
@@ -358,6 +359,7 @@ class BertEvalRequest(BaseModel):
     seed: int = Field(default=42)
 
 
+# ADAPT: Rename and modify this class for your evaluation metrics.
 class BertEvalResult(BaseModel):
     """Aggregate metrics from evaluating a fine-tuned BERT model."""
 
@@ -428,6 +430,7 @@ class BertExperimentOutput(BaseModel):
     """Per-configuration fine-tuning results."""
 
 
+# ADAPT: Update fine_tune_config and evaluation_config types when you rename those classes.
 class CoordinatorWorkflowConfig(BaseModel):
     """Input to the Coordinator Workflow."""
 
@@ -459,6 +462,7 @@ class CoordinatorWorkflowInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# ADAPT: Update fields and defaults for your model's hyperparameter search space.
 class SweepSpace(BaseModel):
     """Search space of hyperparameters used by sweep workflows.
 
